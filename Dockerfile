@@ -34,5 +34,13 @@ RUN npm install -g --allow-scripts=@opencode-ai/cli @powerformer/vela-cli @openc
     && /usr/local/bin/opencode --version \
     && (/usr/local/bin/vela --version || /usr/local/bin/vela --help)
 
-# 7. Fall back to the default unprivileged container layer account
-USER node
+# 7. Pre-create the daemon workspace and hand it to the image's own runtime
+# user. The base image runs as `open-design` (not root, not node); a fresh
+# named volume mounts root-owned, so without this the daemon crash-loops on
+# `mkdir /app/.od/projects` with EACCES. Seeding an owned dir in the image
+# lets Docker populate the empty volume with the right ownership on first mount.
+RUN mkdir -p /app/.od && chown -R open-design:$(id -g open-design) /app/.od && chmod 755 /app/.od
+
+# 8. Drop back to the base image's unprivileged runtime account (open-design),
+# matching upstream -- NOT node, which owns nothing under /app.
+USER open-design
