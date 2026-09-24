@@ -1,0 +1,31 @@
+services:
+  open-design:
+    # 1. Direct Dokploy to compile the Dockerfile in the same folder context
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      # 2. Provide absolute runtime path variables to pass internal engine validation checks
+      - PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/bin
+      - VELA_BIN=/usr/local/bin/vela
+      - OPENCODE_BIN=/usr/local/bin/opencode-cli
+      - HOME=/tmp
+
+      # 3. Security configurations for proxy access through Dokploy
+      # NOTE: Set these in the Dokploy UI (Application > Environment),
+      # do not commit real values to git.
+      - OD_ALLOWED_ORIGINS=${OD_ALLOWED_ORIGINS:-https://spidmax.win}
+      - OD_API_TOKEN=${OD_API_TOKEN}
+    volumes:
+      # 4. Persistent volume storage to preserve design workspace profiles
+      - open-design-workspace:/app/.od
+    networks:
+      - dokploy-network
+
+volumes:
+  open-design-workspace:
+
+networks:
+  dokploy-network:
+    external: true
