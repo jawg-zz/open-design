@@ -8,10 +8,15 @@ USER root
 RUN apk add --no-cache libc6-compat gcompat
 
 # 4. Install the native ARM64 CLI tools directly onto the system's global PATH
-RUN npm install -g @powerformer/vela-cli @opencode-ai/cli --unsafe-perm
+# opencode downloads its platform binary via a postinstall script, and npm >= 11
+# blocks install scripts by default -- explicitly allow this package's scripts.
+RUN npm install -g --allow-scripts=@opencode-ai/cli @powerformer/vela-cli @opencode-ai/cli
 
 # 5. Generate the absolute canonical symlinks that the detectAgents() loop searches for
-RUN ln -sf /usr/local/bin/vela /usr/local/bin/vela-cli \
+# Guard on the real binaries first: ln -sf happily creates dangling links,
+# which only explode later at chmod time with a confusing error.
+RUN test -x /usr/local/bin/vela && test -x /usr/local/bin/opencode-ai \
+    && ln -sf /usr/local/bin/vela /usr/local/bin/vela-cli \
     && ln -sf /usr/local/bin/opencode-ai /usr/local/bin/opencode \
     && ln -sf /usr/local/bin/opencode-ai /usr/local/bin/opencode-cli
 
