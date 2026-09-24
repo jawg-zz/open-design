@@ -7,21 +7,24 @@ USER root
 # 3. Install compatibility layer for glibc-linked binary CLIs on Alpine Linux
 RUN apk add --no-cache libc6-compat gcompat
 
-# 4. Install the native ARM64 CLI tools directly onto the system's global PATH
-# opencode downloads its platform binary via a postinstall script, and npm >= 11
-# blocks install scripts by default -- explicitly allow this package's scripts.
-RUN npm install -g --allow-scripts=@opencode-ai/cli @powerformer/vela-cli @opencode-ai/cli
-
-# 5. Generate the absolute canonical symlinks that the detectAgents() loop searches for
-# Guard on the real binaries first: ln -sf happily creates dangling links,
-# which only explode later at chmod time with a confusing error.
-RUN test -x /usr/local/bin/vela && test -x /usr/local/bin/opencode-ai \
-    && ln -sf /usr/local/bin/vela /usr/local/bin/vela-cli \
-    && ln -sf /usr/local/bin/opencode-ai /usr/local/bin/opencode \
-    && ln -sf /usr/local/bin/opencode-ai /usr/local/bin/opencode-cli
-
-# 6. Open binary flags for seamless sub-process spawning loops
-RUN chmod +x /usr/local/bin/vela* /usr/local/bin/opencode*
+# 4-6. Install the CLIs, verify the real binaries, then pin canonical symlinks --
+# all in ONE layer on purpose, so a half-installed state can never be cached
+# and reused by a later build.
+# - npm >= 11 blocks install scripts by default; @opencode-ai/cli fetches its
+#   platform binary via postinstall, so explicitly allow that package's scripts.
+#   Without this, `opencode-ai` is never created and everything downstream fails.
+# - Symlinks resolve via `npm prefix -g` instead of assuming /usr/local/bin,
+#   then canonical names are pinned there for the detectAgents() loop.
+RUN npm install -g --allow-scripts=@opencode-ai/cli @powerformer/vela-cli @opencode-ai/cli \
+    && BIN_DIR="$(npm prefix -g)/bin" \
+    && echo "global bin dir: $BIN_DIR" && ls -la "$BIN_DIR" \
+    && test -x "$BIN_DIR/vela" \
+    && test -x "$BIN_DIR/opencode-ai" \
+    && ln -sf "$BIN_DIR/vela" /usr/local/bin/vela \
+    && ln -sf "$BIN_DIR/vela" /usr/local/bin/vela-cli \
+    && ln -sf "$BIN_DIR/opencode-ai" /usr/local/bin/opencode \
+    && ln -sf "$BIN_DIR/opencode-ai" /usr/local/bin/opencode-cli \
+    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode*
 
 # 7. Fall back to the default unprivileged container layer account
 USER node
