@@ -12,19 +12,27 @@ RUN apk add --no-cache libc6-compat gcompat
 # and reused by a later build.
 # - npm >= 11 blocks install scripts by default; @opencode-ai/cli fetches its
 #   platform binary via postinstall, so explicitly allow that package's scripts.
-#   Without this, `opencode-ai` is never created and everything downstream fails.
-# - Symlinks resolve via `npm prefix -g` instead of assuming /usr/local/bin,
-#   then canonical names are pinned there for the detectAgents() loop.
+# - The REAL binary names come from each package's `bin` map (verified via
+#   `npm view`): vela exposes `vela` (a node wrapper resolving its platform
+#   package at runtime); @opencode-ai/cli exposes `opencode2` ONLY -- there is
+#   no `opencode-ai` binary, which is why the previous build failed. The
+#   postinstall materializes the linux-arm64-musl binary in place and verifies
+#   it executes before npm reports success.
+# - Canonical names (opencode, opencode-cli, opencode-ai, vela-cli) are then
+#   pinned for the detectAgents() loop, and both CLIs get a --version smoke
+#   test so a non-executing binary fails the build instead of deploying broken.
 RUN npm install -g --allow-scripts=@opencode-ai/cli @powerformer/vela-cli @opencode-ai/cli \
     && BIN_DIR="$(npm prefix -g)/bin" \
     && echo "global bin dir: $BIN_DIR" && ls -la "$BIN_DIR" \
     && test -x "$BIN_DIR/vela" \
-    && test -x "$BIN_DIR/opencode-ai" \
-    && ln -sf "$BIN_DIR/vela" /usr/local/bin/vela \
+    && test -x "$BIN_DIR/opencode2" \
     && ln -sf "$BIN_DIR/vela" /usr/local/bin/vela-cli \
-    && ln -sf "$BIN_DIR/opencode-ai" /usr/local/bin/opencode \
-    && ln -sf "$BIN_DIR/opencode-ai" /usr/local/bin/opencode-cli \
-    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode*
+    && ln -sf "$BIN_DIR/opencode2" /usr/local/bin/opencode \
+    && ln -sf "$BIN_DIR/opencode2" /usr/local/bin/opencode-cli \
+    && ln -sf "$BIN_DIR/opencode2" /usr/local/bin/opencode-ai \
+    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* \
+    && /usr/local/bin/opencode --version \
+    && (/usr/local/bin/vela --version || /usr/local/bin/vela --help)
 
 # 7. Fall back to the default unprivileged container layer account
 USER node
