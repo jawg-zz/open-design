@@ -10,28 +10,34 @@ RUN apk add --no-cache libc6-compat gcompat
 # 4-6. Install the CLIs, verify the real binaries, then pin canonical symlinks --
 # all in ONE layer on purpose, so a half-installed state can never be cached
 # and reused by a later build.
-# - npm >= 11 blocks install scripts by default; @opencode-ai/cli fetches its
-#   platform binary via postinstall, so explicitly allow that package's scripts.
-# - The REAL binary names come from each package's `bin` map (verified via
-#   `npm view`): vela exposes `vela` (a node wrapper resolving its platform
-#   package at runtime); @opencode-ai/cli exposes `opencode2` ONLY -- there is
-#   no `opencode-ai` binary, which is why the previous build failed. The
-#   postinstall materializes the linux-arm64-musl binary in place and verifies
-#   it executes before npm reports success.
-# - Canonical names (opencode, opencode-cli, opencode-ai, vela-cli) are then
-#   pinned for the detectAgents() loop, and both CLIs get a --version smoke
-#   test so a non-executing binary fails the build instead of deploying broken.
-RUN npm install -g --allow-scripts=@opencode-ai/cli @powerformer/vela-cli @opencode-ai/cli \
+# - THE OPENCODE LESSON (verified against nexu-io/open-design source):
+#   the daemon spawns `opencode run --format json --dir <cwd>` and REQUIRES
+#   `run --help` to advertise `--dir` (opencode-permissions.ts sends it
+#   unconditionally -- "an OpenCode build without --dir should fail loudly
+#   at spawn"). `@opencode-ai/cli` is a FORK (anomalyco/opencode) exposing
+#   `opencode2`, whose `run` rejects `--dir`/`--pure` -- installing it breaks
+#   every OpenCode run at spawn with exactly the reported error. The genuine
+#   CLI is the unscoped `opencode-ai` package (opencode.ai), bin `opencode`
+#   (pinned to 1.18.x, the line the daemon's defs were built against).
+# - npm >= 11 blocks install scripts by default; the genuine package fetches
+#   its platform binary (linux-arm64-musl on Alpine) via postinstall, so
+#   explicitly allow its scripts. Without this, `opencode` never materializes.
+# - The daemon prefers bin `opencode-cli` with fallback `opencode`
+#   (runtimes/defs/opencode.ts), so BOTH names must resolve to the genuine binary.
+# - `opencode run --help | grep -- --dir` bakes the daemon's hard requirement
+#   into the build: a future package regression fails the image, not the deploy.
+RUN npm uninstall -g @opencode-ai/cli || true \
+    && npm install -g --allow-scripts=opencode-ai opencode-ai@1.18 @powerformer/vela-cli \
     && BIN_DIR="$(npm prefix -g)/bin" \
     && echo "global bin dir: $BIN_DIR" && ls -la "$BIN_DIR" \
+    && test -x "$BIN_DIR/opencode" \
     && test -x "$BIN_DIR/vela" \
-    && test -x "$BIN_DIR/opencode2" \
-    && ln -sf "$BIN_DIR/vela" /usr/local/bin/vela-cli \
-    && ln -sf "$BIN_DIR/opencode2" /usr/local/bin/opencode \
-    && ln -sf "$BIN_DIR/opencode2" /usr/local/bin/opencode-cli \
-    && ln -sf "$BIN_DIR/opencode2" /usr/local/bin/opencode-ai \
+    && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-cli \
+    && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-ai \
     && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* \
     && /usr/local/bin/opencode --version \
+    && /usr/local/bin/opencode-cli --version \
+    && /usr/local/bin/opencode run --help 2>&1 | grep -q -- --dir \
     && (/usr/local/bin/vela --version || /usr/local/bin/vela --help)
 
 # 7. Pre-create the daemon workspace and hand it to the image's own runtime
