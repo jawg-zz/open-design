@@ -29,35 +29,43 @@ RUN apk add --no-cache libc6-compat gcompat
 # - Codex: official `@openai/codex` package, bin `codex` (node launcher that
 #   resolves its linux-arm64 platform binary via optionalDependencies).
 #   TWO GOTCHAS, both learned the hard way:
-#   a) npm 11 global installs can skip optional deps, leaving `vendor/`
-#      absent -- the wrapper then fails with "Missing optional dependency".
-#      Fix: install `@openai/codex-linux-arm64` EXPLICITLY as a direct dep.
-#   b) The daemon resolves the native binary by walking up from the wrapper
-#      (runtimes/launch.ts `tryResolveCodexNativeBinary`); the explicit
-#      platform package guarantees `vendor/aarch64-unknown-linux-musl/bin/codex`
-#      exists. The native binary is glibc-linked, so `gcompat` alone may not
-#      suffice -- the `--version` smoke test below proves it EXECUTES on musl.
-# - CODEX_HOME: the daemon's sandbox env points it at /tmp/.codex but never
-#   creates it, and the native binary errors when it doesn't exist. Pre-create
-#   it owned by open-design (same pattern as /app/.od above).
+#   a) The platform package `@openai/codex-linux-arm64` is NOT a standalone
+#      registry package -- a bare `npm install -g @openai/codex-linux-arm64`
+#      404s. It exists ONLY as an alias (`npm:@openai/codex@<ver>-linux-arm64`)
+#      in the main package's optionalDependencies, and npm 11 global installs
+#      skip optional deps, leaving `vendor/` absent. Fix: derive the exact
+#      alias spec from the installed package.json and install it explicitly
+#      as a direct global. (The daemon's launch.ts walks ancestors for
+#      node_modules/@openai/codex-* but its candidate file list predates the
+#      current vendor/<triple>/bin/ layout -- so auto-discovery is unreliable;
+#      CODEX_BIN in compose is the deterministic path.)
+#   b) The daemon's sandbox env points CODEX_HOME at /tmp/.codex but never
+#      creates it, and the native binary hard-errors when it doesn't exist.
 RUN npm uninstall -g @opencode-ai/cli || true \
-    && npm install -g --allow-scripts=opencode-ai opencode-ai@1.18 @powerformer/vela-cli @openai/codex @openai/codex-linux-arm64 \
+    && npm install -g --allow-scripts=opencode-ai --include=optional opencode-ai@1.18 @powerformer/vela-cli @openai/codex \
     && BIN_DIR="$(npm prefix -g)/bin" \
     && LIB_DIR="$(npm prefix -g)/lib/node_modules" \
+    && export CODEX_PKG_DIR="$LIB_DIR/@openai/codex" \
+    && CODEX_PLATFORM_SPEC=$(node -e "const d=require(process.env.CODEX_PKG_DIR+'/package.json');const k=Object.keys(d.optionalDependencies||{}).find(n=>n.endsWith('-linux-arm64'));if(!k){console.error('no linux-arm64 platform dep');process.exit(1)}console.log(k+'@'+d.optionalDependencies[k])") \
+    && echo "codex platform spec: $CODEX_PLATFORM_SPEC" \
+    && npm install -g "$CODEX_PLATFORM_SPEC" \
+    && CODEX_NATIVE="$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex" \
     && echo "global bin dir: $BIN_DIR" && ls -la "$BIN_DIR" \
-    && echo "codex platform vendor:" && ls -la "$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/" \
+    && echo "codex platform vendor:" && ls -la "$(dirname "$CODEX_NATIVE")" \
     && test -x "$BIN_DIR/opencode" \
     && test -x "$BIN_DIR/vela" \
     && test -x "$BIN_DIR/codex" \
-    && test -x "$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex" \
+    && test -x "$CODEX_NATIVE" \
     && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-cli \
     && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-ai \
-    && ln -sf "$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex" /usr/local/bin/codex-native \
+    && ln -sf "$CODEX_NATIVE" /usr/local/bin/codex-native \
     && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* /usr/local/bin/codex* \
+    && mkdir -p /tmp/.codex \
     && /usr/local/bin/opencode --version \
     && /usr/local/bin/opencode-cli --version \
     && /usr/local/bin/opencode run --help 2>&1 | grep -q -- --dir \
     && (/usr/local/bin/vela --version || /usr/local/bin/vela --help) \
+    && /usr/local/bin/codex --version \
     && env CODEX_HOME=/tmp/.codex /usr/local/bin/codex-native --version
 
 # 7. Pre-create the daemon workspace and hand it to the image's own runtime
