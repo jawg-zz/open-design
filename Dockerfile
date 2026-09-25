@@ -26,19 +26,25 @@ RUN apk add --no-cache libc6-compat gcompat
 #   (runtimes/defs/opencode.ts), so BOTH names must resolve to the genuine binary.
 # - `opencode run --help | grep -- --dir` bakes the daemon's hard requirement
 #   into the build: a future package regression fails the image, not the deploy.
+# - Codex: official `@openai/codex` package, bin `codex` (node launcher that
+#   resolves its linux-arm64 platform binary via optionalDependencies -- no
+#   install scripts needed, pure npm). Daemon def uses bin `codex`
+#   (runtimes/defs/codex.ts), so no alias required.
 RUN npm uninstall -g @opencode-ai/cli || true \
-    && npm install -g --allow-scripts=opencode-ai opencode-ai@1.18 @powerformer/vela-cli \
+    && npm install -g --allow-scripts=opencode-ai opencode-ai@1.18 @powerformer/vela-cli @openai/codex \
     && BIN_DIR="$(npm prefix -g)/bin" \
     && echo "global bin dir: $BIN_DIR" && ls -la "$BIN_DIR" \
     && test -x "$BIN_DIR/opencode" \
     && test -x "$BIN_DIR/vela" \
+    && test -x "$BIN_DIR/codex" \
     && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-cli \
     && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-ai \
-    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* \
+    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* /usr/local/bin/codex \
     && /usr/local/bin/opencode --version \
     && /usr/local/bin/opencode-cli --version \
     && /usr/local/bin/opencode run --help 2>&1 | grep -q -- --dir \
-    && (/usr/local/bin/vela --version || /usr/local/bin/vela --help)
+    && (/usr/local/bin/vela --version || /usr/local/bin/vela --help) \
+    && /usr/local/bin/codex --version
 
 # 7. Pre-create the daemon workspace and hand it to the image's own runtime
 # user. The base image runs as `open-design` (not root, not node); a fresh
