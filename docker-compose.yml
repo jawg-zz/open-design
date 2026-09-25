@@ -10,6 +10,10 @@ services:
       - PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/bin
       - VELA_BIN=/usr/local/bin/vela
       - OPENCODE_BIN=/usr/local/bin/opencode-cli
+      # Native Codex binary (daemon-native launch path; skips the node wrapper
+      # fallback) + its home dir (pre-created in the image, owned by open-design).
+      - CODEX_BIN=/usr/local/bin/codex-native
+      - CODEX_HOME=/tmp/.codex
       - HOME=/tmp
 
       # 3. Security configurations for proxy access through Dokploy

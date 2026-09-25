@@ -27,31 +27,45 @@ RUN apk add --no-cache libc6-compat gcompat
 # - `opencode run --help | grep -- --dir` bakes the daemon's hard requirement
 #   into the build: a future package regression fails the image, not the deploy.
 # - Codex: official `@openai/codex` package, bin `codex` (node launcher that
-#   resolves its linux-arm64 platform binary via optionalDependencies -- no
-#   install scripts needed, pure npm). Daemon def uses bin `codex`
-#   (runtimes/defs/codex.ts), so no alias required.
+#   resolves its linux-arm64 platform binary via optionalDependencies).
+#   TWO GOTCHAS, both learned the hard way:
+#   a) npm 11 global installs can skip optional deps, leaving `vendor/`
+#      absent -- the wrapper then fails with "Missing optional dependency".
+#      Fix: install `@openai/codex-linux-arm64` EXPLICITLY as a direct dep.
+#   b) The daemon resolves the native binary by walking up from the wrapper
+#      (runtimes/launch.ts `tryResolveCodexNativeBinary`); the explicit
+#      platform package guarantees `vendor/aarch64-unknown-linux-musl/bin/codex`
+#      exists. The native binary is glibc-linked, so `gcompat` alone may not
+#      suffice -- the `--version` smoke test below proves it EXECUTES on musl.
+# - CODEX_HOME: the daemon's sandbox env points it at /tmp/.codex but never
+#   creates it, and the native binary errors when it doesn't exist. Pre-create
+#   it owned by open-design (same pattern as /app/.od above).
 RUN npm uninstall -g @opencode-ai/cli || true \
-    && npm install -g --allow-scripts=opencode-ai opencode-ai@1.18 @powerformer/vela-cli @openai/codex \
+    && npm install -g --allow-scripts=opencode-ai opencode-ai@1.18 @powerformer/vela-cli @openai/codex @openai/codex-linux-arm64 \
     && BIN_DIR="$(npm prefix -g)/bin" \
+    && LIB_DIR="$(npm prefix -g)/lib/node_modules" \
     && echo "global bin dir: $BIN_DIR" && ls -la "$BIN_DIR" \
+    && echo "codex platform vendor:" && ls -la "$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/" \
     && test -x "$BIN_DIR/opencode" \
     && test -x "$BIN_DIR/vela" \
     && test -x "$BIN_DIR/codex" \
+    && test -x "$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex" \
     && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-cli \
     && ln -sf "$BIN_DIR/opencode" /usr/local/bin/opencode-ai \
-    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* /usr/local/bin/codex \
+    && ln -sf "$LIB_DIR/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex" /usr/local/bin/codex-native \
+    && chmod +x /usr/local/bin/vela* /usr/local/bin/opencode* /usr/local/bin/codex* \
     && /usr/local/bin/opencode --version \
     && /usr/local/bin/opencode-cli --version \
     && /usr/local/bin/opencode run --help 2>&1 | grep -q -- --dir \
     && (/usr/local/bin/vela --version || /usr/local/bin/vela --help) \
-    && /usr/local/bin/codex --version
+    && env CODEX_HOME=/tmp/.codex /usr/local/bin/codex-native --version
 
 # 7. Pre-create the daemon workspace and hand it to the image's own runtime
 # user. The base image runs as `open-design` (not root, not node); a fresh
 # named volume mounts root-owned, so without this the daemon crash-loops on
 # `mkdir /app/.od/projects` with EACCES. Seeding an owned dir in the image
 # lets Docker populate the empty volume with the right ownership on first mount.
-RUN mkdir -p /app/.od && chown -R open-design:$(id -g open-design) /app/.od && chmod 755 /app/.od
+RUN mkdir -p /app/.od /tmp/.codex && chown -R open-design:$(id -g open-design) /app/.od /tmp/.codex && chmod 755 /app/.od /tmp/.codex
 
 # 8. Drop back to the base image's unprivileged runtime account (open-design),
 # matching upstream -- NOT node, which owns nothing under /app.
